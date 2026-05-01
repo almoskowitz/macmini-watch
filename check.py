@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-PRICE_CAP = 599
+PRICE_CAP = 600
 STATE_PATH = Path("state.json")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
 
@@ -42,8 +42,15 @@ def fetch(url: str) -> str:
 
 
 def looks_blocked(html: str) -> bool:
-    low = html.lower()
-    return any(s in low for s in ("captcha", "robot check", "to discuss automated access"))
+    # Only treat short responses or obvious block pages as blocked. Full-size
+    # product pages legitimately contain the word "captcha" inside JS bundles.
+    if len(html) < 50_000:
+        low = html.lower()
+        if any(s in low for s in ("captcha", "robot check", "to discuss automated access")):
+            return True
+    if "/errors/validateCaptcha" in html or "Robot Check</title>" in html:
+        return True
+    return False
 
 
 def check_apple_refurb() -> list[dict]:
@@ -141,6 +148,14 @@ def check_bestbuy() -> list[dict]:
     if not html or looks_blocked(html):
         print("[bestbuy] blocked or empty response", file=sys.stderr)
         return []
+    mac_mini_count = len(re.findall(r"Mac mini", html, re.IGNORECASE))
+    m4_count = len(re.findall(r"\bM4\b", html))
+    prices = sorted({p for p in re.findall(r"\$\s*([0-9][0-9,]{2,4}\.\d{2})", html)})
+    print(
+        f"[bestbuy] 'Mac mini' x{mac_mini_count}, 'M4' x{m4_count}, "
+        f"distinct prices: {prices[:15]}{'...' if len(prices) > 15 else ''}",
+        file=sys.stderr,
+    )
     hits = []
     # Best Buy embeds product data in JSON-ish blocks. Loose approach:
     # find product tiles, require "Mac mini" + "M4", new condition (no
