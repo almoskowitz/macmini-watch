@@ -1,11 +1,15 @@
 # macmini-watch
 
-Polls Apple Refurb, Amazon, and Best Buy every 10 minutes for an M4 Mac mini at $599 or less. Posts to Slack `#product-updates` on a new hit.
+Polls Apple's Certified Refurbished store every ~10 minutes for an M4 Mac mini at $600 or less. Posts to Slack `#product-updates` on a new hit.
 
 ## Setup
 
 1. Create a GitHub Actions secret named `SLACK_WEBHOOK_URL` with the incoming webhook URL.
 2. Push the repo. The cron starts on its own.
+
+## Manual test ping
+
+Actions tab → Mac Mini stock watch → Run workflow → check **Send a Slack test ping and exit**. Confirms the webhook is wired up without waiting for inventory.
 
 ## Local test run
 
@@ -17,6 +21,5 @@ SLACK_WEBHOOK_URL="" python3 check.py
 
 ## Notes
 
-- Apple Refurb is the only retailer where $599-or-less actually shows up regularly. Amazon and Best Buy almost never list new units below MSRP, so those checks are mostly a safety net.
-- Amazon often blocks GitHub Actions IPs with a CAPTCHA page. If that's happening, the script logs `[amazon] blocked` and skips it. No false positives.
-- State is committed back to `state.json` after each run so duplicate hits don't re-alert.
+- State is committed back to `state.json` after each run so duplicate hits don't re-alert. If a listing goes out of stock and comes back, you'll get re-pinged.
+- GitHub Actions cron is best-effort; runs typically land every 10–20 min.

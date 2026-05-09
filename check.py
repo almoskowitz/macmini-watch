@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Polls Apple Refurb, Amazon, and Best Buy for an M4 Mac mini at $599 or less,
-in stock, new (or refurbished, in Apple's case). On a new hit, posts to Slack
-via webhook. Dedupes via state.json.
+Polls Apple's Certified Refurbished store for an M4 Mac mini at $600 or less.
+On a new hit, posts to Slack via webhook. Dedupes via state.json.
 """
 
 import json
@@ -41,25 +40,11 @@ def fetch(url: str) -> str:
         return ""
 
 
-def looks_blocked(html: str) -> bool:
-    # Only treat short responses or obvious block pages as blocked. Full-size
-    # product pages legitimately contain the word "captcha" inside JS bundles.
-    if len(html) < 50_000:
-        low = html.lower()
-        if any(s in low for s in ("captcha", "robot check", "to discuss automated access")):
-            return True
-    if "/errors/validateCaptcha" in html or "Robot Check</title>" in html:
-        return True
-    return False
-
-
 def check_apple_refurb() -> list[dict]:
     url = "https://www.apple.com/shop/refurbished/mac/mac-mini"
     html = fetch(url)
     if not html:
         return []
-    # Diagnostics: confirm the page actually contains product data, not just
-    # the React shell.
     mac_mini_count = len(re.findall(r"Mac mini", html, re.IGNORECASE))
     m4_count = len(re.findall(r"\bM4\b", html))
     prices = sorted({p for p in re.findall(r"\$\s*([0-9][0-9,]{2,4}\.\d{2})", html)})
@@ -69,9 +54,6 @@ def check_apple_refurb() -> list[dict]:
         file=sys.stderr,
     )
     hits = []
-    # Apple refurb listings: each product block contains the product title
-    # and a price near it. We anchor on "Mac mini" + "M4" and find the
-    # nearest price within the same block.
     pattern = re.compile(
         r"(Refurbished[^<]{0,200}Mac mini[^<]{0,200}M4[^<]{0,400}?)"
         r"[\s\S]{0,3000}?\$\s*([0-9][0-9,]{2,4})\.\d{2}",
@@ -94,107 +76,6 @@ def check_apple_refurb() -> list[dict]:
                     "url": url,
                 }
             )
-    return hits
-
-
-def check_amazon() -> list[dict]:
-    # Amazon aggressively blocks GitHub Actions IPs. This is best-effort —
-    # if it gets a CAPTCHA page we just bail. Adjust strategy if needed.
-    url = "https://www.amazon.com/s?k=mac+mini+m4&i=electronics"
-    html = fetch(url)
-    if not html or looks_blocked(html):
-        print("[amazon] blocked or empty response", file=sys.stderr)
-        return []
-    hits = []
-    # Look for product cards containing "Mac mini" + "M4" and a price
-    # under the cap. Filter out third-party sellers by requiring "Apple"
-    # in the title (Apple is the brand on legitimate listings).
-    card_pattern = re.compile(
-        r'data-component-type="s-search-result"[\s\S]{0,8000}?</div>\s*</div>\s*</div>',
-        re.IGNORECASE,
-    )
-    for card in card_pattern.findall(html):
-        if "Mac mini" not in card or "M4" not in card:
-            continue
-        if "Apple" not in card:
-            continue
-        # Skip refurb / renewed / used
-        if re.search(r"(renewed|refurbished|used|open[- ]box)", card, re.I):
-            continue
-        price_m = re.search(r'<span class="a-offscreen">\$([0-9][0-9,]{2,4})\.\d{2}</span>', card)
-        if not price_m:
-            continue
-        price = int(price_m.group(1).replace(",", ""))
-        if price > PRICE_CAP:
-            continue
-        title_m = re.search(r'<span class="[^"]*a-text-normal[^"]*">([^<]{10,200})</span>', card)
-        title = (title_m.group(1) if title_m else "Mac mini M4").strip()
-        link_m = re.search(r'href="(/[^"]+/dp/[^"]+)"', card)
-        link = "https://www.amazon.com" + link_m.group(1) if link_m else url
-        hits.append(
-            {
-                "retailer": "Amazon",
-                "variant": title[:140],
-                "price": price,
-                "url": link,
-            }
-        )
-    return hits
-
-
-def check_bestbuy() -> list[dict]:
-    url = "https://www.bestbuy.com/site/searchpage.jsp?st=mac+mini+m4"
-    html = fetch(url)
-    if not html or looks_blocked(html):
-        print("[bestbuy] blocked or empty response", file=sys.stderr)
-        return []
-    mac_mini_count = len(re.findall(r"Mac mini", html, re.IGNORECASE))
-    m4_count = len(re.findall(r"\bM4\b", html))
-    prices = sorted({p for p in re.findall(r"\$\s*([0-9][0-9,]{2,4}\.\d{2})", html)})
-    print(
-        f"[bestbuy] 'Mac mini' x{mac_mini_count}, 'M4' x{m4_count}, "
-        f"distinct prices: {prices[:15]}{'...' if len(prices) > 15 else ''}",
-        file=sys.stderr,
-    )
-    # Proximity-based: find every "Mac mini" mention with "M4" nearby (within
-    # ~600 chars) and the closest price within ~2000 chars. Skip refurb/open-box
-    # blocks. Dedupe by (title-ish, price).
-    hits = []
-    seen = set()
-    for m in re.finditer(r"Mac mini", html, re.IGNORECASE):
-        start = max(0, m.start() - 300)
-        end = min(len(html), m.end() + 600)
-        block = html[start:end]
-        if not re.search(r"\bM4\b", block):
-            continue
-        # New only — skip open-box / refurb blocks
-        if re.search(r"(open[- ]box|geek squad|refurb)", block, re.I):
-            continue
-        # Find prices in a wider neighborhood (Best Buy often renders price
-        # in a sibling component a bit further away)
-        wide = html[max(0, m.start() - 500): min(len(html), m.end() + 2000)]
-        price_m = re.search(r"\$\s*([0-9][0-9,]{2,4})\.\d{2}", wide)
-        if not price_m:
-            continue
-        price = int(price_m.group(1).replace(",", ""))
-        if price > PRICE_CAP:
-            continue
-        # Best-effort title: a chunk of nearby text mentioning Mac mini + M4
-        title = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", block)).strip()
-        title = re.search(r"([^.]{0,140}Mac mini[^.]{0,140}M4[^.]{0,80})", title, re.I)
-        title = title.group(1).strip() if title else "Mac mini M4"
-        key = (title[:80], price)
-        if key in seen:
-            continue
-        seen.add(key)
-        hits.append(
-            {
-                "retailer": "Best Buy",
-                "variant": title[:140],
-                "price": price,
-                "url": url,
-            }
-        )
     return hits
 
 
@@ -252,11 +133,10 @@ def main() -> int:
         return 0
 
     all_hits: list[dict] = []
-    for fn in (check_apple_refurb, check_amazon, check_bestbuy):
-        try:
-            all_hits.extend(fn())
-        except Exception as e:
-            print(f"[{fn.__name__}] error: {e}", file=sys.stderr)
+    try:
+        all_hits.extend(check_apple_refurb())
+    except Exception as e:
+        print(f"[check_apple_refurb] error: {e}", file=sys.stderr)
 
     print(f"hits this run: {len(all_hits)}")
     for h in all_hits:
