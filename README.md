@@ -29,7 +29,7 @@ GitHub Actions cron is best-effort and typically lands every 10–20 minutes —
    - Default is `600`
 5. **(Optional) Tag a Slack user on real hits**:
    - Add a repo secret `SLACK_MENTION_USER_IDS` with one or more Slack user IDs (e.g. `U07PCFNRLH3` or `U07PCFNRLH3,U08ABCDE123`).
-   - Real hits will be prefixed with `<@user>` mentions. Test pings never tag anyone.
+   - All Slack messages (including test pings) will be prefixed with `<@user>` mentions.
 6. The cron starts on its own once pushed.
 
 ## Manual test ping

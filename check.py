@@ -90,9 +90,8 @@ def post_slack(hit: dict) -> None:
     if not SLACK_WEBHOOK_URL:
         print(f"[slack] (dry-run) would post: {hit}", file=sys.stderr)
         return
-    is_test = hit.get("retailer") == "TEST"
     mentions = ""
-    if SLACK_MENTION_USER_IDS and not is_test:
+    if SLACK_MENTION_USER_IDS:
         ids = [u.strip() for u in SLACK_MENTION_USER_IDS.split(",") if u.strip()]
         mentions = " ".join(f"<@{u}>" for u in ids)
         if mentions:
