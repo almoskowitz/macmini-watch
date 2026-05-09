@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Polls Apple's Certified Refurbished store for an M4 Mac mini at $600 or less.
+Polls Apple's Certified Refurbished store for M4 Mac mini and Mac Studio listings.
+Filters by MEMORY_SIZES (comma-separated, e.g. "64GB,96GB,128GB") and optionally PRICE_CAP.
 On a new hit, posts to Slack via webhook. Dedupes via state.json.
 """
 
@@ -12,12 +13,17 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-PRICE_CAP = int(os.environ.get("PRICE_CAP", "600"))
+MEMORY_SIZES = [s.strip() for s in os.environ.get("MEMORY_SIZES", "").split(",") if s.strip()]
+PRICE_CAP = int(os.environ.get("PRICE_CAP", "0")) or None
 STATE_PATH = Path("state.json")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
-# Optional: Slack user ID(s) to @-mention on real hits. Comma-separated for
-# multiple. Leave empty to skip mentions. Test pings never mention anyone.
+# Optional: Slack user ID(s) to @-mention on hits. Comma-separated for multiple.
 SLACK_MENTION_USER_IDS = os.environ.get("SLACK_MENTION_USER_IDS", "").strip()
+
+PRODUCTS = [
+    ("Mac mini",   "https://www.apple.com/shop/refurbished/mac/mac-mini"),
+    ("Mac Studio", "https://www.apple.com/shop/refurbished/mac/mac-studio"),
+]
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -43,22 +49,21 @@ def fetch(url: str) -> str:
         return ""
 
 
-def check_apple_refurb() -> list[dict]:
-    url = "https://www.apple.com/shop/refurbished/mac/mac-mini"
+def check_apple_refurb(product: str, url: str) -> list[dict]:
     html = fetch(url)
     if not html:
         return []
-    mac_mini_count = len(re.findall(r"Mac mini", html, re.IGNORECASE))
+    product_count = len(re.findall(re.escape(product), html, re.IGNORECASE))
     m4_count = len(re.findall(r"\bM4\b", html))
     prices = sorted({p for p in re.findall(r"\$\s*([0-9][0-9,]{2,4}\.\d{2})", html)})
     print(
-        f"[apple] 'Mac mini' x{mac_mini_count}, 'M4' x{m4_count}, "
+        f"[apple] '{product}' x{product_count}, 'M4' x{m4_count}, "
         f"distinct prices: {prices[:15]}{'...' if len(prices) > 15 else ''}",
         file=sys.stderr,
     )
     hits = []
     pattern = re.compile(
-        r"(Refurbished[^<]{0,200}Mac mini[^<]{0,200}M4[^<]{0,400}?)"
+        rf"(Refurbished[^<]{{0,200}}{re.escape(product)}[^<]{{0,200}}M4[^<]{{0,400}}?)"
         r"[\s\S]{0,3000}?\$\s*([0-9][0-9,]{2,4})\.\d{2}",
         re.IGNORECASE,
     )
@@ -70,15 +75,18 @@ def check_apple_refurb() -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        if price <= PRICE_CAP:
-            hits.append(
-                {
-                    "retailer": "Apple Refurb",
-                    "variant": title[:140],
-                    "price": price,
-                    "url": url,
-                }
-            )
+        if MEMORY_SIZES and not any(s.lower() in title.lower() for s in MEMORY_SIZES):
+            continue
+        if PRICE_CAP and price > PRICE_CAP:
+            continue
+        hits.append(
+            {
+                "retailer": f"Apple Refurb {product}",
+                "variant": title[:140],
+                "price": price,
+                "url": url,
+            }
+        )
     return hits
 
 
@@ -96,8 +104,12 @@ def post_slack(hit: dict) -> None:
         mentions = " ".join(f"<@{u}>" for u in ids)
         if mentions:
             mentions += " "
+    filter_desc = "/".join(MEMORY_SIZES) if MEMORY_SIZES else (f"${PRICE_CAP}" if PRICE_CAP else "")
+    header = f":rotating_light: {hit['retailer']} hit"
+    if filter_desc:
+        header += f" — {filter_desc}"
     text = (
-        f"{mentions}:rotating_light: Mac mini ${PRICE_CAP} hit — {hit['retailer']}\n"
+        f"{mentions}{header}\n"
         f"{hit['variant']} at ${hit['price']}\n"
         f"{hit['url']}"
     )
@@ -136,16 +148,17 @@ def main() -> int:
                 "retailer": "TEST",
                 "variant": "end-to-end Slack wiring test",
                 "price": 0,
-                "url": "https://www.apple.com/shop/refurbished/mac/mac-mini",
+                "url": "https://www.apple.com/shop/refurbished/mac",
             }
         )
         return 0
 
     all_hits: list[dict] = []
-    try:
-        all_hits.extend(check_apple_refurb())
-    except Exception as e:
-        print(f"[check_apple_refurb] error: {e}", file=sys.stderr)
+    for product_name, product_url in PRODUCTS:
+        try:
+            all_hits.extend(check_apple_refurb(product_name, product_url))
+        except Exception as e:
+            print(f"[check_apple_refurb] {product_name} error: {e}", file=sys.stderr)
 
     print(f"hits this run: {len(all_hits)}")
     for h in all_hits:
