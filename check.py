@@ -15,6 +15,9 @@ from pathlib import Path
 PRICE_CAP = int(os.environ.get("PRICE_CAP", "600"))
 STATE_PATH = Path("state.json")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
+# Optional: Slack user ID(s) to @-mention on real hits. Comma-separated for
+# multiple. Leave empty to skip mentions. Test pings never mention anyone.
+SLACK_MENTION_USER_IDS = os.environ.get("SLACK_MENTION_USER_IDS", "").strip()
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -87,8 +90,15 @@ def post_slack(hit: dict) -> None:
     if not SLACK_WEBHOOK_URL:
         print(f"[slack] (dry-run) would post: {hit}", file=sys.stderr)
         return
+    is_test = hit.get("retailer") == "TEST"
+    mentions = ""
+    if SLACK_MENTION_USER_IDS and not is_test:
+        ids = [u.strip() for u in SLACK_MENTION_USER_IDS.split(",") if u.strip()]
+        mentions = " ".join(f"<@{u}>" for u in ids)
+        if mentions:
+            mentions += " "
     text = (
-        f":rotating_light: Mac mini ${PRICE_CAP} hit — {hit['retailer']}\n"
+        f"{mentions}:rotating_light: Mac mini ${PRICE_CAP} hit — {hit['retailer']}\n"
         f"{hit['variant']} at ${hit['price']}\n"
         f"{hit['url']}"
     )
