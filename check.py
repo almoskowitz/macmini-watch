@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-PRICE_CAP = 600
+PRICE_CAP = int(os.environ.get("PRICE_CAP", "600"))
 STATE_PATH = Path("state.json")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
 
@@ -125,9 +125,9 @@ def main() -> int:
         post_slack(
             {
                 "retailer": "TEST",
-                "variant": "macmini-watch end-to-end test",
+                "variant": "end-to-end Slack wiring test",
                 "price": 0,
-                "url": "https://github.com/brosePR/macmini-watch",
+                "url": "https://www.apple.com/shop/refurbished/mac/mac-mini",
             }
         )
         return 0

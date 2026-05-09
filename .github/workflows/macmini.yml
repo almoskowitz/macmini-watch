@@ -34,6 +34,7 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           TEST_PING: ${{ inputs.test_ping == true && '1' || '0' }}
+          PRICE_CAP: "600"
         run: python check.py
 
       - name: Commit state if changed
