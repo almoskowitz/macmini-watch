@@ -15,7 +15,7 @@ SLACK_WEBHOOK_URL="" python3 check.py
 # Live run with a real webhook
 SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..." python3 check.py
 
-# Test ping only (skips the actual scrape)
+# Test ping only (skips the actual scrape, but does send @-mentions if configured)
 TEST_PING=1 SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..." python3 check.py
 ```
 
@@ -24,20 +24,22 @@ TEST_PING=1 SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..." python3 che
 **`check.py`** is the entire program. Key behaviors:
 
 - `PRODUCTS` — list of `(product_name, url)` pairs at the top of `check.py`. Add entries here to watch additional Apple refurb pages.
-- `check_apple_refurb(product, url)` — fetches the given refurb page, regex-parses it for listings matching "Refurbished...{product}...M4", then filters by `MEMORY_SIZES` and `PRICE_CAP`. Returns list of hit dicts.
+- `check_apple_refurb(product, url)` — fetches the given refurb page, regex-parses it for listings matching `Refurbished...{product}...M4` within a ~400-char window, then filters by `MEMORY_SIZES` and `PRICE_CAP`. Variant titles are truncated to 140 chars. Returns list of hit dicts.
 - `main()` — iterates over `PRODUCTS`, loads `state.json` (previous run's hits keyed by `retailer|variant|price`), posts only *new* keys to Slack, then saves the current hits back to `state.json`.
-- **Deduplication**: `state.json` is committed back to the repo after each run by the workflow. This means a listing only triggers one Slack alert even across many runs.
-- `TEST_PING=1` short-circuits everything — sends a dummy Slack message and exits without scraping.
+- **Deduplication**: `state.json` is committed back to the repo after each run by the workflow. It tracks the *current* set of active listings — a listing only alerts once. Importantly, if a listing's price changes, it alerts again (price is part of the key). Listings that disappear from the refurb page are dropped from state, so they'll re-alert if they come back.
+- `TEST_PING=1` short-circuits everything — sends a dummy Slack message (including any `SLACK_MENTION_USER_IDS` @-mentions) and exits without scraping.
 
 ## Environment variables / secrets
 
-| Name | Source | Purpose |
-|------|--------|---------|
-| `SLACK_WEBHOOK_URL` | GitHub secret | Slack incoming webhook. Empty = dry-run. |
-| `SLACK_MENTION_USER_IDS` | GitHub secret | Optional comma-separated Slack user IDs to @-mention |
-| `MEMORY_SIZES` | Workflow env var | Comma-separated memory sizes to match (e.g. `"64GB,96GB,128GB"`). Any match triggers alert. Empty = any. |
-| `PRICE_CAP` | Workflow env var | Dollar ceiling for alerts. `0` = no cap. |
-| `TEST_PING` | Workflow input | Set to `1` to send test ping and exit |
+| Name | Source | Current value | Purpose |
+|------|--------|---------------|---------|
+| `SLACK_WEBHOOK_URL` | GitHub secret | — | Slack incoming webhook. Empty = dry-run. |
+| `SLACK_MENTION_USER_IDS` | GitHub secret | — | Optional comma-separated Slack user IDs to @-mention |
+| `MEMORY_SIZES` | Workflow env var | `64GB,96GB,128GB` | Comma-separated memory sizes to match. Any match triggers alert. Empty = any. |
+| `PRICE_CAP` | Workflow env var | `3000` | Dollar ceiling for alerts. `0` = no cap. |
+| `TEST_PING` | Workflow input | — | Set to `1` to send test ping and exit |
+
+To change the memory filter or price cap, edit the `env:` block in `.github/workflows/macmini.yml`.
 
 ## Workflow
 

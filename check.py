@@ -53,38 +53,61 @@ def check_apple_refurb(product: str, url: str) -> list[dict]:
     html = fetch(url)
     if not html:
         return []
-    product_count = len(re.findall(re.escape(product), html, re.IGNORECASE))
-    m4_count = len(re.findall(r"\bM4\b", html))
-    prices = sorted({p for p in re.findall(r"\$\s*([0-9][0-9,]{2,4}\.\d{2})", html)})
-    print(
-        f"[apple] '{product}' x{product_count}, 'M4' x{m4_count}, "
-        f"distinct prices: {prices[:15]}{'...' if len(prices) > 15 else ''}",
-        file=sys.stderr,
-    )
+
+    m = re.search(r"window\.REFURB_GRID_BOOTSTRAP\s*=\s*", html)
+    if not m:
+        print(f"[apple] '{product}': REFURB_GRID_BOOTSTRAP not found in page", file=sys.stderr)
+        return []
+    try:
+        data, _ = json.JSONDecoder().raw_decode(html, m.end())
+    except json.JSONDecodeError as e:
+        print(f"[apple] '{product}': JSON parse error: {e}", file=sys.stderr)
+        return []
+
+    tiles = data.get("tiles", [])
+    # tsMemorySize values are lowercase without spaces, e.g. "128gb"
+    memory_filter = {s.lower().replace(" ", "") for s in MEMORY_SIZES}
+    matching = sum(1 for t in tiles if product in t.get("title", "") and re.search(r"\bM4\b", t.get("title", "")))
+    print(f"[apple] '{product}': {len(tiles)} tiles on page, {matching} matching M4 {product}", file=sys.stderr)
+
     hits = []
-    pattern = re.compile(
-        rf"(Refurbished[^<]{{0,200}}{re.escape(product)}[^<]{{0,200}}M4[^<]{{0,400}}?)"
-        r"[\s\S]{0,3000}?\$\s*([0-9][0-9,]{2,4})\.\d{2}",
-        re.IGNORECASE,
-    )
     seen = set()
-    for m in pattern.finditer(html):
-        title = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", m.group(1))).strip()
-        price = int(m.group(2).replace(",", ""))
+    for tile in tiles:
+        title = tile.get("title", "")
+        if not title.startswith("Refurbished"):
+            continue
+        if product not in title:
+            continue
+        if not re.search(r"\bM4\b", title):
+            continue
+
+        try:
+            price = int(float(tile["price"]["currentPrice"]["raw_amount"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+
         key = (title, price)
         if key in seen:
             continue
         seen.add(key)
-        if MEMORY_SIZES and not any(s.lower() in title.lower() for s in MEMORY_SIZES):
-            continue
+
+        if memory_filter:
+            ts_mem = tile.get("filters", {}).get("dimensions", {}).get("tsMemorySize", "").lower()
+            if ts_mem not in memory_filter:
+                continue
         if PRICE_CAP and price > PRICE_CAP:
             continue
+
+        product_url = tile.get("productDetailsUrl") or url
+        if product_url.startswith("/"):
+            product_url = "https://www.apple.com" + product_url
+
         hits.append(
             {
                 "retailer": f"Apple Refurb {product}",
                 "variant": title[:140],
                 "price": price,
-                "url": url,
+                "url": product_url,
             }
         )
     return hits
